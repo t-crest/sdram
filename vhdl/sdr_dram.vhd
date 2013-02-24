@@ -47,6 +47,7 @@ use work.sdram_controller_interface.all;
 -- Uses closed page policy.
 entity sdr_sdram is
     generic(
+        SHORT_INITIALIZATION : boolean := false;
         USE_AUTOMATIC_REFRESH : boolean;
         BURST_LENGTH          : natural; -- The number of words transfered per request
         SDRAM                 : sdram_config_type; -- Parameters of the SDRAM chip
@@ -55,7 +56,7 @@ entity sdr_sdram is
         CS_LOW_BIT            : natural; -- last position of rank address in logical address
         BA_LOW_BIT            : natural; -- last position of bank address in logical address
         ROW_LOW_BIT           : natural; -- last position of row address in logical address
-        COL_LOW_BIT           : natural -- last position of column address in logical address
+        COL_LOW_BIT           : natural  -- last position of column address in logical address
     );
     port(
         rst         : in    std_logic;  -- Reset
@@ -177,7 +178,7 @@ architecture RTL of sdr_sdram is
         return result;
     end function CalculateAct2WriteCycles;
 
-    constant c_INIT_IDLE_CYCLES        : natural := SDRAM.INIT_IDLE;
+    constant c_INIT_IDLE_CYCLES        : natural := SDRAM.INIT_IDLE * sl2int(bool2sl(not SHORT_INITIALIZATION));
     constant c_PRECHARGE_CYCLES        : natural := SDRAM.RP;
     constant c_REFRESH_CYCLES          : natural := SDRAM.RC;
     constant c_PROGRAM_REGISTER_CYCLES : natural := SDRAM.MRD;
@@ -230,7 +231,11 @@ begin
     reg : process(clk, rst) is
     begin
         if rst = '1' then
-            state_r <= initWaitLock;
+            --if SHORT_INITIALIZATION then
+            --    state_r <= ready;
+            --else
+                state_r <= initWaitLock;
+            --end if;
         elsif rising_edge(clk) then
             state_r              <= state_nxt;
             -- SDRAM i-face registers
@@ -300,7 +305,7 @@ begin
         case state_r is
             when initWaitLock =>
                 if pll_locked = '1' then
-                    refi_cnt_nxt <= c_INIT_IDLE_CYCLES - 1;
+                    refi_cnt_nxt <= max(0, c_INIT_IDLE_CYCLES - 1);
                     state_nxt    <= initWaitIdle;
                 end if;
             when initWaitIdle =>
@@ -321,7 +326,11 @@ begin
             when initPrechargeComplete =>
                 if delay_cnt_done = '1' then
                     refresh_repeat_cnt_nxt <= max(0, SDRAM.INIT_REFRESH_COUNT - 1);
-                    state_nxt              <= initRefresh;
+                    if SHORT_INITIALIZATION then
+                        state_nxt              <= initProgramModeReg;
+                    else
+                        state_nxt              <= initRefresh;
+                    end if;
                 end if;
             when initRefresh =>
                 sdram_RAS_n_nxt        <= '0';
