@@ -22,11 +22,16 @@ else
 	WINE=
 endif
 
+ifeq ($(USE_DMA_DEVICE),y)
 TB = sdr_sdram_dma_controller_tb
 
 VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.e.vhd
 VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.p.vhd
 VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.a.vhd
+else
+TB = sdr_sdram_tb
+endif
+
 VHDL_FILES += $(SRCDIR)vhdl/sdram_config.vhd
 VHDL_FILES += $(SRCDIR)vhdl/sdram_config-IS42S16160B-7TLI.vhd
 VHDL_FILES += $(SRCDIR)vhdl/sdram_controller_interface.vhd
