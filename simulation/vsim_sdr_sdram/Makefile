@@ -24,10 +24,13 @@ endif
 
 TB = sdr_sdram_dma_controller_tb
 
-VHDL_FILES += $(SRCDIR)../ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.e.vhd
-VHDL_FILES += $(SRCDIR)../ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.p.vhd
-VHDL_FILES += $(SRCDIR)../ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.a.vhd
-VHDL_FILES += $(SRCDIR)sdr_dram.vhd
+VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.e.vhd
+VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.p.vhd
+VHDL_FILES += $(SRCDIR)../patmos/ise/ml605_edk/pcores/dma_controller_dtl_v1_00_a/hdl/vhdl/dma_controller_dtl.a.vhd
+VHDL_FILES += $(SRCDIR)vhdl/sdram_config.vhd
+VHDL_FILES += $(SRCDIR)vhdl/sdram_config-IS42S16160B-7TLI.vhd
+VHDL_FILES += $(SRCDIR)vhdl/sdram_controller_interface.vhd
+VHDL_FILES += $(SRCDIR)vhdl/sdr_dram.vhd
 
 VHDL_FILES += $(SRCDIR)simulation/mt48lc2m32b2_2.vhd
 
@@ -42,7 +45,7 @@ batch: VSIM_OPT:=-c -t 100ps -do batch.do
 batch: vsim
 
 
-simulate: VSIM_OPT:=-t 100ps -do sim.do 
+simulate: VSIM_OPT:=-t 100ps -do sim.do
 simulate: vsim
 
 vsim: clean base

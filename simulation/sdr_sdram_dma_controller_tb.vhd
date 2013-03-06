@@ -7,50 +7,39 @@ end entity sdr_sdram_dma_controller_tb;
 
 use std.textio.all;
 use work.dma_controller_dtl_cmp_pkg.all;
+use work.sdram_config.all;
+use work.sdram_controller_interface.all;
 
 architecture RTL of sdr_sdram_dma_controller_tb is
+    function REFI_override(config : sdram_config_type; REFI: natural) return sdram_config_type is
+      variable result : sdram_config_type;
+    begin
+      result := config;
+      result.REFI := REFI;
+      return result;
+    end function REFI_override;
+
     constant BURST_LENGTH : natural := 8;
+    -- 100MHz, 2 cycles read data latency
+    constant tCLK_PERIOD  : time              := 20 ns;
+    constant CAS_LATENCY  : natural           := 2;
+    constant SDRAM_default: sdram_config_type := GetSDRAMParameters(tCLK_PERIOD, CAS_LATENCY);
+    -- Make refresh frequent to see the interference with other commands
+    constant SDRAM : sdram_config_type := REFI_override(SDRAM_default, 10);
 
-    constant ADDR_WIDTH  : integer := 23;
-    constant DATA_WIDTH  : integer := 32;
-    -- Address Mapping
-    constant COL_WIDTH   : integer := 9;
-    constant ROW_WIDTH   : integer := 12;
-    constant BA_WIDTH    : integer := 2;
-    constant CS_WIDTH    : integer := 0;
+
+    -- Address Mapping => (bank & row & column)
+    constant CS_WIDTH    : integer := 0; -- 1 rank
     constant COL_LOW_BIT : integer := 0;
-    constant ROW_LOW_BIT : integer := COL_WIDTH; -- 9
-    constant BA_LOW_BIT  : integer := ROW_LOW_BIT + ROW_WIDTH; -- 9+13=22
-    constant CS_LOW_BIT  : integer := BA_LOW_BIT + BA_WIDTH; -- 22+2=24
-    -- SDRAM configuration
-    constant SA_WIDTH    : natural := ROW_WIDTH;
-
-    constant tCLK               : time    := 10 ns; --! Clock period
-    constant tINIT_IDLE         : time    := 50 ns; -- 200 us; --! Inactivity perdiod required during initialization 
-    constant INIT_REFRESH_COUNT : natural := 8; --! Number of Refresh commands required during initialization
-    constant tCAC_CYCLES        : natural := 2; --! CAS latency
-    constant tRRD               : time    := 14 ns; --! Row to Row Delay (ACT[0]-ACT[1])
-    constant tRCD               : time    := 20 ns; --! Row to Column Delay (ACT-READ/WRITE)
-    constant tRAS               : time    := 45 ns; --! Row Access Strobe (ACT-PRE)
-    constant tRC                : time    := 67.5 ns; --! Row Cycle (REF-REF,ACT-ACT)
-    constant tRP                : time    := 20 ns; --! Row Precharge (PRE-ACT)
-    constant tCCD               : time    := tCLK * 1; --! Column Command Delay Time
-    constant tDPL               : time    := 14 ns; --! Input Data to Precharge (DQ_WR-PRE)
-    constant tDAL               : time    := 35 ns; --! Input Data to Activate (DQ_WR-ACT/PRE)
-    constant tRBD               : time    := tCLK * tCAC_CYCLES; --! Burst Stop to High Impedance (Read)
-    constant tWBD               : time    := 0 ns; --! Burst Stop to Input in Invalid (Write)
-    constant tPQL               : time    := tCLK * (tCAC_CYCLES - 1); --! Last Output to Auto-Precharge Start (READ)
-    constant tQMD               : time    := tCLK * 2; --! DQM to Output (Read)
-    constant tDMD               : time    := 0 ns; --! DQM to Input (Write)
-    constant tMRD               : time    := 15 ns; --! Mode Register Delay (program time)
-    constant tMRD_CYCLES        : natural := 2; --! Mode Register Delay (program time) in Cycles
-    constant tREF               : time    := tCLK*(2**ROW_WIDTH)*10; --! Refresh Cycle (for each row)
+    constant ROW_LOW_BIT : integer := COL_LOW_BIT + SDRAM.COL_WIDTH; -- 9
+    constant BA_LOW_BIT  : integer := ROW_LOW_BIT + SDRAM.ROW_WIDTH; -- 9+13=22
+    constant CS_LOW_BIT  : integer := BA_LOW_BIT + SDRAM.BA_WIDTH; -- 22+2=24
 
     constant DQ_WIDTH         : integer := 8;
     constant MTL_MASK_WIDTH   : integer := 4;
     --	constant MTL_SIZE_WIDTH   : integer := 5;
     constant MTL_SIZE_WIDTH   : integer := 5;
-    constant MTL_ADDR_WIDTH   : integer := ADDR_WIDTH;
+    constant MTL_ADDR_WIDTH   : integer := SDRAM_ADDR_WIDTH;
     -- Request size in bytes
     --	constant GEN_REQUEST_SIZE : integer := 64;
     constant GEN_REQUEST_SIZE : integer := 4 * BURST_LENGTH;
@@ -64,54 +53,29 @@ architecture RTL of sdr_sdram_dma_controller_tb is
     constant DEBUG_SHOW_MEMORY_TRANSACTIONS    : boolean := true;
     constant DEBUG_SHOW_CACHELINE_TRANSACTIONS : boolean := true;
 
-    --===========================================================
-    -- Default timing parameters for mt48lc2m32b2_2
-    --===========================================================
-    --    -- Timing Parameters for -6 and CAS Latency = 2
-    --    constant tOH  : TIME    := 2.0 ns;
-    --    constant tMRD : INTEGER := 2;       -- 2 Clk Cycles
-    --    constant tRAS : TIME    := 42.0 ns;
-    --    constant tRC  : TIME    := 60.0 ns;
-    --    constant tRCD : TIME    := 18.0 ns;
-    --    constant tRP  : TIME    := 18.0 ns;
-    --    constant tRRD : TIME    := 12.0 ns;
-    --    constant tWRa : TIME    := 6.0 ns;  -- A2 Version - Auto precharge mode only (1 Clk + 6 ns)
-    --    constant tWRp : TIME    := 12.0 ns; -- A2 Version - Precharge mode only (12 ns)
-    --
-    --    constant tAS  : TIME := 1.5 ns;
-    --    constant tCH  : TIME := 2.5 ns;
-    --    constant tCL  : TIME := 2.5 ns;
-    --    constant tCK  : TIME := 10.5 ns;
-    --    constant tDH  : TIME := 1.0 ns;
-    --    constant tDS  : TIME := 1.5 ns;
-    --    constant tCKH : TIME := 1.0 ns;
-    --    constant tCKS : TIME := 1.5 ns;
-    --    constant tCMH : TIME := 0 ns;
-    --    constant tCMS : TIME := 0 ns;
 
     --===========================================================
     -- Timing parameters for IS42S16160B: speed grade -7, tCL=3
     --===========================================================
-    constant tOH  : TIME := 3.0 ns;
-    --    constant tMRD : INTEGER := 2;       -- 2 Clk Cycles
-    --    constant tRAS : TIME    := 45.0 ns;
-    --    constant tRC  : TIME    := 67.5 ns;
-    --    constant tRCD : TIME    := 20.0 ns;
-    --    constant tRP  : TIME    := 20.0 ns;
-    --    constant tRRD : TIME    := 14.0 ns;
-    constant tWRa : TIME := 6.0 ns - 6 ns; -- A2 Version - Auto precharge mode only (1 Clk + 6 ns)
-    constant tWRp : TIME := 20 ns + 14.0 ns; -- A2 Version - Precharge mode only (12 ns)
-
-    constant tCH  : TIME := 2.5 ns;
-    constant tCL  : TIME := 2.5 ns;
-    constant tCK  : TIME := 10 ns;
-    constant tAS  : TIME := 2 ns;
-    constant tDS  : TIME := 2 ns;
-    constant tCKS : TIME := tDS;
-    constant tCMS : TIME := tDS;
-    constant tDH  : TIME := 0 ns;       --1 ns; -- We use 0 delay behavioural model, so Hold violation checks are disabled
-    constant tCKH : TIME := tDH;
-    constant tCMH : TIME := tDH;
+    constant tOH         : TIME    := 3.0 ns;
+    constant tMRD_CYCLES : INTEGER := 2; -- 2 Clk Cycles
+    constant tRAS        : TIME    := SDRAM.RAS * tCLK_PERIOD;
+    constant tRC         : TIME    := SDRAM.RC * tCLK_PERIOD;
+    constant tRCD        : TIME    := SDRAM.RCD * tCLK_PERIOD;
+    constant tRP         : TIME    := SDRAM.RP * tCLK_PERIOD;
+    constant tRRD        : TIME    := SDRAM.RRD * tCLK_PERIOD;
+    constant tWRa        : TIME    := 6.0 ns - 6 ns; -- A2 Version - Auto precharge mode only (1 Clk + 6 ns)
+    constant tWRp        : TIME    := 20 ns + 14.0 ns; -- A2 Version - Precharge mode only (12 ns)
+    constant tCH         : TIME    := 2.5 ns;
+    constant tCL         : TIME    := 2.5 ns;
+    constant tCK         : TIME    := 10 ns;
+    constant tAS         : TIME    := 2 ns;
+    constant tDS         : TIME    := 2 ns;
+    constant tCKS        : TIME    := tDS;
+    constant tCMS        : TIME    := tDS;
+    constant tDH         : TIME    := 0 ns; --1 ns; -- We use 0 delay behavioural model, so Hold violation checks are disabled
+    constant tCKH        : TIME    := tDH;
+    constant tCMH        : TIME    := tDH;
 
     subtype dma_word_t is std_logic_vector(DMA_DATA_WIDTH - 1 downto 0);
 
@@ -162,33 +126,23 @@ architecture RTL of sdr_sdram_dma_controller_tb is
 
     signal clk_ram     : std_logic := '0';
     signal rst         : std_logic;
-    signal sdram_sa    : std_logic_vector(SA_WIDTH - 1 downto 0);
-    signal sdram_ba    : std_logic_vector(BA_WIDTH - 1 downto 0);
+    signal sdram_sa    : std_logic_vector(SDRAM.SA_WIDTH - 1 downto 0);
+    signal sdram_ba    : std_logic_vector(SDRAM.BA_WIDTH - 1 downto 0);
     signal sdram_cs_n  : std_logic_vector(2 ** CS_WIDTH - 1 downto 0);
     signal sdram_cke   : std_logic;
     signal sdram_ras_n : std_logic;
     signal sdram_cas_n : std_logic;
     signal sdram_we_n  : std_logic;
-    signal sdram_dq    : std_logic_vector(DATA_WIDTH - 1 downto 0);
-    signal sdram_dqm   : std_logic_vector(DATA_WIDTH / 8 - 1 downto 0);
+    signal sdram_dq    : std_logic_vector(SDRAM_DATA_WIDTH - 1 downto 0);
+    signal sdram_dqm   : std_logic_vector(SDRAM_DATA_WIDTH / 8 - 1 downto 0);
+    signal sdram_dq_out : STD_LOGIC_VECTOR(SDRAM_DATA_WIDTH - 1 DOWNTO 0);
+    signal sdram_dq_dir : STD_LOGIC_VECTOR(3 downto 0);
 
     constant USE_DIMM_MODEL   : boolean := true;
     constant USE_AUTOMATIC_REFRESH : boolean := true;
-    signal ocp_MCmd           : std_logic_vector(2 downto 0);
-    signal ocp_SFlag_CmdRefresh : std_logic := '0';
-    signal ocp_MFlag_RefreshAccept : std_logic;
-    signal ocp_MAddr          : std_logic_vector(ADDR_WIDTH - 1 downto 0);
-    signal ocp_SCmdAccept     : std_logic;
-    signal ocp_MData          : std_logic_vector(DATA_WIDTH - 1 downto 0);
-    signal ocp_MDataByteEn    : std_logic_vector(DATA_WIDTH / 8 - 1 downto 0);
-    signal ocp_MDataValid     : std_logic;
-    signal ocp_MDataLast      : std_logic;
-    signal ocp_SDataAccept    : std_logic;
-    signal ocp_SData          : std_logic_vector(DATA_WIDTH - 1 downto 0);
-    signal ocp_SResp          : std_logic;
-    signal ocp_SRespLast      : std_logic;
-    signal sdram_dq_out : STD_LOGIC_VECTOR(DATA_WIDTH - 1 DOWNTO 0);
-    signal sdram_dq_dir : STD_LOGIC_VECTOR(3 downto 0);
+
+    signal ocp_master : SDRAM_controller_master_type;
+    signal ocp_slave  : SDRAM_controller_slave_type;
 begin
     -- Wrapper
     dut : work.dma_controller_dtl_cmp_pkg.dma_controller_dtl
@@ -224,89 +178,51 @@ begin
             dma_rd_data_i        => dma_rd_data_i,
             dma_wr_i             => dma_wr_i,
             dma_wr_data_i        => dma_wr_data_i);
-    -- The Controller
+    -- The SDRAM Controller
     sdr_sdram_inst : entity work.sdr_sdram
-        generic map(
-	    USE_AUTOMATIC_REFRESH => USE_AUTOMATIC_REFRESH,
-            ADDR_WIDTH         => ADDR_WIDTH,
-            DATA_WIDTH         => DATA_WIDTH,
-            BURST_LENGTH       => BURST_LENGTH,
-            SA_WIDTH           => SA_WIDTH,
-            CS_WIDTH           => CS_WIDTH,
-            CS_LOW_BIT         => CS_LOW_BIT,
-            BA_WIDTH           => BA_WIDTH,
-            BA_LOW_BIT         => BA_LOW_BIT,
-            ROW_WIDTH          => ROW_WIDTH,
-            ROW_LOW_BIT        => ROW_LOW_BIT,
-            COL_WIDTH          => COL_WIDTH,
-            COL_LOW_BIT        => COL_LOW_BIT,
-            tCLK               => tCLK,
-            tINIT_IDLE         => tINIT_IDLE,
-            INIT_REFRESH_COUNT => INIT_REFRESH_COUNT,
-            tCAC_CYCLES        => tCAC_CYCLES,
-            tRRD               => tRRD,
-            tRCD               => tRCD,
-            tRAS               => tRAS,
-            tRC                => tRC,
-            tRP                => tRP,
-            tCCD               => tCCD,
-            tDPL               => tDPL,
-            tDAL               => tDAL,
-            tRBD               => tRBD,
-            tWBD               => tWBD,
-            tPQL               => tPQL,
-            tQMD               => tQMD,
-            tDMD               => tDMD,
-            tMRD_CYCLES        => tMRD_CYCLES,
-            tREF               => tREF)
-        port map(
-            rst                => rst,
-            clk                => clk,
-            pll_locked         => '1',
-            ocp_MCmd           => ocp_MCmd,
-            ocp_SFlag_CmdRefresh => ocp_SFlag_CmdRefresh,
-            ocp_MFlag_RefreshAccept => ocp_MFlag_RefreshAccept,
-            ocp_MAddr          => ocp_MAddr,
-            ocp_SCmdAccept     => ocp_SCmdAccept,
-            ocp_MData          => ocp_MData,
-            ocp_MDataByteEn    => ocp_MDataByteEn,
-            ocp_MDataValid     => ocp_MDataValid,
-            ocp_MDataLast      => ocp_MDataLast,
-            ocp_SDataAccept    => ocp_SDataAccept,
-            ocp_SData          => ocp_SData,
-            ocp_SResp          => ocp_SResp,
-            ocp_SRespLast      => ocp_SRespLast,
-            sdram_CKE          => sdram_CKE,
-            sdram_RAS_n        => sdram_RAS_n,
-            sdram_CAS_n        => sdram_CAS_n,
-            sdram_WE_n         => sdram_WE_n,
-            sdram_CS_n         => sdram_CS_n,
-            sdram_BA           => sdram_BA,
-            sdram_SA           => sdram_SA,
-            sdram_DQ           => sdram_DQ,
-            sdram_DQM          => sdram_DQM);
+        generic map(SHORT_INITIALIZATION => true,
+                    USE_AUTOMATIC_REFRESH => USE_AUTOMATIC_REFRESH,
+                    BURST_LENGTH          => BURST_LENGTH,
+                    SDRAM                 => SDRAM,
+                    CS_WIDTH              => CS_WIDTH,
+                    CS_LOW_BIT            => CS_LOW_BIT,
+                    BA_LOW_BIT            => BA_LOW_BIT,
+                    ROW_LOW_BIT           => ROW_LOW_BIT,
+                    COL_LOW_BIT           => COL_LOW_BIT)
+        port map(rst         => rst,
+                 clk         => clk,
+                 pll_locked  => '1',
+                 ocpSlave    => ocp_slave,
+                 ocpMaster   => ocp_master,
+                 sdram_CKE   => sdram_CKE,
+                 sdram_RAS_n => sdram_RAS_n,
+                 sdram_CAS_n => sdram_CAS_n,
+                 sdram_WE_n  => sdram_WE_n,
+                 sdram_CS_n  => sdram_CS_n,
+                 sdram_BA    => sdram_BA,
+                 sdram_SA    => sdram_SA,
+                 sdram_DQ    => sdram_DQ,
+                 sdram_DQM   => sdram_DQM);
 
     -- CMD
-    ocp_SFlag_CmdRefresh  <= '0';
-    ocp_MCmd         <= '0' & (mtl_cmd_valid_i and (not mtl_cmd_read_i)) & (mtl_cmd_valid_i and mtl_cmd_read_i);
-    ocp_MAddr        <= mtl_cmd_addr_i;
-    mtl_cmd_accept_i <= ocp_SCmdAccept;
+    ocp_master.MFlag_CmdRefresh  <= '0';
+    ocp_master.MCmd         <= '0' & (mtl_cmd_valid_i and (not mtl_cmd_read_i)) & (mtl_cmd_valid_i and mtl_cmd_read_i);
+    ocp_master.MAddr        <= mtl_cmd_addr_i;
+    mtl_cmd_accept_i <= ocp_slave.SCmdAccept;
     assert (to_integer(unsigned(mtl_cmd_block_size_i)) + 1) = BURST_LENGTH or mtl_cmd_valid_i /= '1' report "Unsupported block size" severity failure;
     -- Write 
-    ocp_MData       <= mtl_wr_data_i;
-    ocp_MDataValid  <= mtl_wr_valid_i;
-    ocp_MDataLast   <= mtl_wr_last_i;
-    ocp_MDataByteEn <= mtl_wr_mask_i;
-    mtl_wr_accept_i <= ocp_SDataAccept;
+    ocp_master.MData       <= mtl_wr_data_i;
+    ocp_master.MDataByteEn <= mtl_wr_mask_i;
+    mtl_wr_accept_i <= ocp_slave.SDataAccept;
     -- Read 
-    mtl_rd_data_i   <= ocp_SData;
-    mtl_rd_valid_i  <= ocp_SResp;
-    mtl_rd_last_i   <= ocp_SRespLast;
+    mtl_rd_data_i   <= ocp_slave.SData;
+    mtl_rd_valid_i  <= ocp_slave.SResp;
+    mtl_rd_last_i   <= ocp_slave.SRespLast;
     assert mtl_rd_accept_i = '1' or mtl_rd_valid_i /= '1' report "Protocol error: wrapper not ready to accept data" severity failure;
-    -- ocp_MRespAccept not used
+    -- ocp_master.MRespAccept not used
 
     gen_delay_dq_out : for i in sdram_dq_dir'range generate
-        sdram_dq((i+1)*8-1 downto i*8)  <= sdram_dq_out((i+1)*8-1 downto i*8)'delayed(tCLK/10) when sdram_dq_dir'delayed(tCLK/10)(i)='1' else (others => 'Z');
+        sdram_dq((i+1)*8-1 downto i*8)  <= sdram_dq_out((i+1)*8-1 downto i*8)'delayed(tCLK_PERIOD/10) when sdram_dq_dir'delayed(tCLK_PERIOD/10)(i)='1' else (others => 'Z');
     end generate gen_delay_dq_out;
 
     
@@ -334,23 +250,23 @@ begin
                     tCKS      => tCKS,
                     tCMH      => tCMH,
                     tCMS      => tCMS,
-                    addr_bits => ROW_WIDTH,
-                    data_bits => DATA_WIDTH,
-                    col_bits  => COL_WIDTH)
+                    addr_bits => SDRAM.ROW_WIDTH,
+                    data_bits => SDRAM_DATA_WIDTH,
+                    col_bits  => SDRAM.COL_WIDTH)
                 port map(
-                    Dq_in  => sdram_dq'delayed(tCLK/10),
+                    Dq_in  => sdram_dq'delayed(tCLK_PERIOD/10),
                     Dq_out => sdram_dq_out,
                     Dq_dir => sdram_dq_dir,
-                    Addr   => sdram_sa'delayed(tCLK/10),
-                    Ba     => sdram_Ba'delayed(tCLK/10),
---                    Clk    => clk_ram'delayed(tCLK/2),
+                    Addr   => sdram_sa'delayed(tCLK_PERIOD/10),
+                    Ba     => sdram_Ba'delayed(tCLK_PERIOD/10),
+--                    Clk    => clk_ram'delayed(tCLK_PERIOD/2),
                     Clk    => clk_ram,
-                    Cke    => sdram_cke'delayed(tCLK/10),
-                    Cs_n   => sdram_cs_n(i)'delayed(tCLK/10),
-                    Ras_n  => sdram_ras_n'delayed(tCLK/10),
-                    Cas_n  => sdram_cas_n'delayed(tCLK/10),
-                    We_n   => sdram_We_n'delayed(tCLK/10),
-                    Dqm    => sdram_Dqm'delayed(tCLK/10)  
+                    Cke    => sdram_cke'delayed(tCLK_PERIOD/10),
+                    Cs_n   => sdram_cs_n(i)'delayed(tCLK_PERIOD/10),
+                    Ras_n  => sdram_ras_n'delayed(tCLK_PERIOD/10),
+                    Cas_n  => sdram_cas_n'delayed(tCLK_PERIOD/10),
+                    We_n   => sdram_We_n'delayed(tCLK_PERIOD/10),
+                    Dqm    => sdram_Dqm'delayed(tCLK_PERIOD/10)  
                 );
         end generate chips;
     end generate dimm;
@@ -389,13 +305,13 @@ begin
             -- generate both clocks to have 0 delta_delay seperation
             clk <= '1';
             clk_ram  <= '1';
-            wait for tCLK / 2;
+            wait for tCLK_PERIOD / 2;
             clk <= '0';
             clk_ram  <= '0';
-            wait for tCLK / 2;
+            wait for tCLK_PERIOD / 2;
         end if;
     end process clock_driver;
-    rst_n <= '0', '1' after tCLK * 2.2;
+    rst_n <= '0', '1' after tCLK_PERIOD * 2.2;
     rst  <= not rst_n;
 
     show_cache_line_transactions : if DEBUG_SHOW_CACHELINE_TRANSACTIONS generate
@@ -528,8 +444,8 @@ begin
         report "Writing inc pattern";
         for i in 0 to NWORDS_PER_CMD*2-1 loop
             if (not USE_AUTOMATIC_REFRESH and (i mod 10 = 0)) then
-                ocp_SFlag_CmdRefresh <= '1';
-                wait until rising_edge(clk) and ocp_MFlag_RefreshAccept = '1';
+                ocp_master.MFlag_CmdRefresh <= '1';
+                wait until rising_edge(clk) and ocp_slave.SFlag_RefreshAccept = '1';
             end if;
             controllerWrite('0', (i mod NWORDS_PER_CMD), i);
             if (i mod NWORDS_PER_CMD) = NWORDS_PER_CMD-1 then
@@ -540,8 +456,8 @@ begin
         report "Reading inc pattern";
         for i in 0 to NWORDS_PER_CMD*2-1 loop
             if (not USE_AUTOMATIC_REFRESH and (i mod 10 = 0)) then
-                ocp_SFlag_CmdRefresh <= '1';
-                wait until rising_edge(clk) and ocp_MFlag_RefreshAccept = '1';
+                ocp_master.MFlag_CmdRefresh <= '1';
+                wait until rising_edge(clk) and ocp_slave.SFlag_RefreshAccept = '1';
             end if;
             if (i mod NWORDS_PER_CMD) = 0 then
                 memoryLineOp(i/NWORDS_PER_CMD, loLoadLine);
