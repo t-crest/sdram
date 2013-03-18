@@ -15,16 +15,16 @@ architecture RTL of sdr_sdram_tb is
     begin
         result      := config;
         -- Make refresh frequent to see the interference with other commands
-        result.REFI := 10;
+        result.REFI := 100;
         -- Use smaller memory for testing
         result.COL_WIDTH := 4;
         result.ROW_WIDTH := 2;
         return result;
     end function SDRAM_params_override;
 
-    constant BURST_LENGTH  : natural           := 8;
+    constant BURST_LENGTH  : natural           := 2;
     -- 100MHz, 2 cycles read data latency
-    constant tCLK_PERIOD   : time              := 20 ns;
+    constant tCLK_PERIOD   : time              := 10 ns;
     constant CAS_LATENCY   : natural           := 2;
     constant SDRAM_default : sdram_config_type := GetSDRAMParameters(tCLK_PERIOD, CAS_LATENCY);
     constant SDRAM         : sdram_config_type := SDRAM_params_override(SDRAM_default);
@@ -38,7 +38,7 @@ architecture RTL of sdr_sdram_tb is
 
     constant DEBUG_SHOW_CONTROLLER_DATA_TRANSFERS : boolean := true;
 
-    constant TEST_MEM_SIZE : natural := BURST_LENGTH * 4;
+    constant TEST_MEM_SIZE : natural := 2**(CS_WIDTH+SDRAM.COL_WIDTH+SDRAM.ROW_WIDTH+SDRAM.BA_WIDTH);
 
     constant USE_DIMM_MODEL        : boolean := true;
     constant USE_AUTOMATIC_REFRESH : boolean := true;
@@ -231,14 +231,16 @@ begin
             wait until rising_edge(clk);
             if ocp_master.MCmd /= "000" and ocp_slave.SCmdAccept = '1' then
                 addr := TO_INTEGER(unsigned(ocp_master.MAddr));
+                if (ocp_master.MCmd = "001") then report "MEM RD" & " at " & integer'image(addr) & " accepted"; end if;
+                if (ocp_master.MCmd = "010") then report "MEM WR" & " at " & integer'image(addr) & " accepted"; end if;
             end if;
 
             if ocp_slave.SResp = '1' then
-                report "MEM RD " & integer'image(to_integer(signed(ocp_slave.SData))) & " at " & integer'image(addr) & " last=" & std_logic'image(ocp_slave.SRespLast);
+                report "MEM RD Data " & integer'image(to_integer(signed(ocp_slave.SData))) & " last=" & std_logic'image(ocp_slave.SRespLast) & " at " & integer'image(addr) & " (note: address hint might be wrong in case of pipelined access)";
                 addr := addr + 1;
             end if;
             if ocp_slave.SDataAccept = '1' then
-                report "MEM WR " & integer'image(to_integer(signed(ocp_master.MData))) & " at " & integer'image(addr);
+                report "MEM WR Data " & integer'image(to_integer(signed(ocp_master.MData))) & " at " & integer'image(addr) & " (note: address hint might be wrong in case of pipelined access)";
                 addr := addr + 1;
             end if;
         end process memory_monitor;
@@ -293,7 +295,7 @@ begin
             end loop;
         end procedure do_read;
 
-        procedure do_write(addr : natural; data : burst_data_t) is
+        procedure do_write(addr : natural; data : burst_data_t; is_pipelined : boolean := false; addr_next : natural := 0) is
             variable i : integer := 0;
         begin
             ocp_master.MAddr <= std_logic_vector(to_unsigned(addr, ocp_master.MAddr'length));
@@ -304,7 +306,11 @@ begin
                 wait until rising_edge(clk);
 
                 if ocp_slave.SCmdAccept = '1' then
-                    ocp_master.MCmd <= "000";
+                    if not is_pipelined then
+                        ocp_master.MCmd <= "000";
+                    else 
+                        ocp_master.MAddr <= std_logic_vector(to_unsigned(addr_next, ocp_master.MAddr'length));
+                    end if;
                 end if;
 
                 if ocp_slave.SDataAccept = '1' then
@@ -317,7 +323,10 @@ begin
 
         variable burst_data : burst_data_t;
         variable value      : sdram_word_t;
+        variable block_addr : natural;
+        variable do_pipeline : boolean;
 
+        variable addr_cmd, addr_data, offset : natural;
     begin
         ocp_master.MCmd             <= "000";
         ocp_master.MFlag_CmdRefresh <= '0';
@@ -339,11 +348,6 @@ begin
 
         report "Writing inc pattern:";
         for i in 0 to TEST_MEM_SIZE - 1 loop
-            if (not USE_AUTOMATIC_REFRESH and (i mod 10 = 0)) then
-                ocp_master.MFlag_CmdRefresh <= '1';
-                wait until rising_edge(clk) and ocp_slave.SFlag_RefreshAccept = '1';
-                ocp_master.MFlag_CmdRefresh <= '0';
-            end if;
             burst_data(i mod BURST_LENGTH) := std_logic_vector(to_unsigned(i, burst_data(0)'length));
             if (i mod BURST_LENGTH) = BURST_LENGTH - 1 then
                 do_write(i / BURST_LENGTH * BURST_LENGTH, burst_data);
@@ -352,11 +356,6 @@ begin
 
         report "Reading inc pattern:";
         for i in 0 to TEST_MEM_SIZE - 1 loop
-            if (not USE_AUTOMATIC_REFRESH and (i mod 10 = 0)) then
-                ocp_master.MFlag_CmdRefresh <= '1';
-                wait until rising_edge(clk) and ocp_slave.SFlag_RefreshAccept = '1';
-                ocp_master.MFlag_CmdRefresh <= '0';
-            end if;
             if (i mod BURST_LENGTH) = 0 then
                 do_read(i, burst_data);
             end if;
@@ -364,10 +363,68 @@ begin
             value := burst_data(i mod BURST_LENGTH);
             assert check(value = std_logic_vector(to_unsigned(i,value'length))) report "Word Read failed at " & natural'image(i) severity error;
         end loop;
+        
+        report "Writing(pipelined) ed inc pattern:";
+        for i in 0 to TEST_MEM_SIZE - 1 loop
+            burst_data(i mod BURST_LENGTH) := std_logic_vector(to_unsigned(i+13, burst_data(0)'length));
+            if (i mod BURST_LENGTH) = BURST_LENGTH - 1 then
+                block_addr := i / BURST_LENGTH * BURST_LENGTH;
+                -- pipeline all except the last request
+                do_pipeline := i < (TEST_MEM_SIZE-1);
+                do_write(block_addr, burst_data, do_pipeline, block_addr+BURST_LENGTH);
+            end if;
+        end loop;
+
+        report "Reading(pipelined) inc pattern:";
+        addr_cmd := 0;
+        addr_data := 0; 
+        ocp_master.MAddr <= std_logic_vector(to_unsigned(addr_cmd, ocp_master.MAddr'length));
+        ocp_master.MCmd  <= "001";
+        loop
+                wait until rising_edge(clk);
+
+                -- Issue the next read command once the current is accepted (while in test range)
+                if ocp_slave.SCmdAccept = '1' then
+                    if addr_cmd < TEST_MEM_SIZE-BURST_LENGTH then
+                        addr_cmd := addr_cmd + BURST_LENGTH;
+                        ocp_master.MAddr <= std_logic_vector(to_unsigned(addr_cmd, ocp_master.MAddr'length));
+                    else 
+                        ocp_master.MCmd <= "000";
+                    end if;
+                end if;
+
+                -- Check the data
+                if ocp_slave.SResp = '1' then
+                    assert check((ocp_slave.SRespLast = '0' and offset /= BURST_LENGTH - 1) or (ocp_slave.SRespLast = '1' and offset = BURST_LENGTH - 1)) report "SRespLast error (" & integer'image(offset) & "'th word in burst) read at " & integer'image(addr_data) severity error;
+                    if ocp_slave.SRespLast = '1' then
+                        offset := 0;
+                    else
+                        offset := offset + 1;
+                    end if;
+                    assert check(ocp_slave.SData = std_logic_vector(to_unsigned(addr_data+13,value'length))) report "Word Read failed at " & natural'image(addr_data) &
+                    " expected: " & integer'image(addr_data+13) & " got: " & integer'image(to_integer(signed(ocp_slave.SData))) severity error;
+                    addr_data := addr_data + 1;
+                    
+                    exit when addr_data = TEST_MEM_SIZE;
+                end if;
+        end loop;
+
 
         report "Test Finished with " & integer'image(errors) & " errors.";
         end_of_sim <= '1';
         report "Test Finished with " & integer'image(errors) & " errors." severity failure;
     end process control_test;
+    
+    refresh : process is
+    begin
+        wait for tCLK_PERIOD * SDRAM.REFI;
+        
+        if (not USE_AUTOMATIC_REFRESH) then
+            ocp_master.MFlag_CmdRefresh <= '1';
+            wait until rising_edge(clk) and ocp_slave.SFlag_RefreshAccept = '1';
+            ocp_master.MFlag_CmdRefresh <= '0';
+        end if;
+    end process refresh;
+    
 
 end architecture RTL;

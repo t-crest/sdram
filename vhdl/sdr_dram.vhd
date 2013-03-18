@@ -137,7 +137,7 @@ architecture RTL of sdr_sdram is
         result(8 downto 7) := "00";
         -- CAS Latency: usual binary encoding
         result(6 downto 4) := std_logic_vector(to_unsigned(SDRAM.CAC, 3));
-        -- Burst Type: '0'- Sequential; '1'- interleaved
+        -- Burst Type: '0'- Sequential; '1'- interleaved (addr ^ offset)
         result(3)          := '0';
         -- Burst Length: "000".."011": 1,2,4,8; "111": Full Page
         case BURST_LENGTH is
@@ -203,10 +203,14 @@ architecture RTL of sdr_sdram is
     -- registered Data output tri-state controll
     signal sdram_DQoe_r       : std_logic;
     signal sdram_DQoe_nxt     : std_logic;
+
     alias a_cs                : std_logic_vector(CS_WIDTH - 1 downto 0) is ocpMaster.MAddr(CS_WIDTH + CS_LOW_BIT - 1 downto CS_LOW_BIT);
     alias a_row               : std_logic_vector(SDRAM.ROW_WIDTH - 1 downto 0) is ocpMaster.MAddr(SDRAM.ROW_WIDTH + ROW_LOW_BIT - 1 downto ROW_LOW_BIT);
     alias a_bank              : std_logic_vector(SDRAM.BA_WIDTH - 1 downto 0) is ocpMaster.MAddr(SDRAM.BA_WIDTH + BA_LOW_BIT - 1 downto BA_LOW_BIT);
-    alias a_column            : std_logic_vector(SDRAM.COL_WIDTH - 1 downto 0) is ocpMaster.MAddr(SDRAM.COL_WIDTH + COL_LOW_BIT - 1 downto COL_LOW_BIT);
+    -- SDRAM activate is issued at the same cycle as command is accepted. The row address is latched to conform to OCP
+    signal cs_r               : std_logic_vector(CS_WIDTH - 1 downto 0);
+    signal bank_r             : std_logic_vector(SDRAM.BA_WIDTH - 1 downto 0);
+    signal column_r           : std_logic_vector(SDRAM.COL_WIDTH - 1 downto 0);
 
     -- Counters
     -- A big counter for keeping the refresh/initialisation interval
@@ -256,11 +260,18 @@ begin
             refi_cnt_r           <= refi_cnt_nxt;
             refresh_repeat_cnt_r <= refresh_repeat_cnt_nxt;
             burst_cnt_r          <= burst_cnt_nxt;
+            if state_r = ready and ocpMaster.MCmd /= "000" then
+                -- latch the column address on command issue to conform to OCP
+                cs_r   <= ocpMaster.MAddr(CS_WIDTH + CS_LOW_BIT - 1 downto CS_LOW_BIT);
+                bank_r   <= ocpMaster.MAddr(SDRAM.BA_WIDTH + BA_LOW_BIT - 1 downto BA_LOW_BIT);
+                column_r <= ocpMaster.MAddr(SDRAM.COL_WIDTH + COL_LOW_BIT - 1 downto COL_LOW_BIT);
+            end if;
+
         end if;
     end process reg;
 
     -- State machine
-    controller : process(a_bank, a_column, a_cs, a_row, burst_cnt_r, delay_cnt_r, ocpMaster.MCmd, ocpMaster.MDataByteEn, pll_locked, refresh_repeat_cnt_r, state_r, refi_cnt_r)
+    controller : process(a_bank, bank_r, column_r, a_cs, cs_r, a_row, burst_cnt_r, delay_cnt_r, ocpMaster.MCmd, ocpMaster.MDataByteEn, pll_locked, refresh_repeat_cnt_r, state_r, refi_cnt_r)
         variable do_refresh              : std_logic;
         -- These are created as variables, to get rid of simulation range mismatch, where counters are out of range in transient time.
         variable refi_cnt_done           : std_logic;
@@ -404,12 +415,12 @@ begin
                     sdram_RAS_n_nxt              <= '1';
                     sdram_CAS_n_nxt              <= '0';
                     sdram_WE_n_nxt               <= '1';
-                    sdram_BA_nxt                 <= a_bank;
-                    sdram_CS_n_nxt               <= BinDecode_n(a_cs);
-                    sdram_SA_nxt(a_column'range) <= a_column;
+                    sdram_BA_nxt                 <= bank_r;
+                    sdram_CS_n_nxt               <= BinDecode_n(cs_r);
+                    sdram_SA_nxt(column_r'range) <= column_r;
                     sdram_SA_nxt(10)             <= '1'; -- auto precharge
-                    if a_column'high >= 10 then
-                        sdram_SA_nxt(a_column'high + 1 downto 11) <= a_column(a_column'high downto 10);
+                    if column_r'high >= 10 then
+                        sdram_SA_nxt(column_r'high + 1 downto 11) <= column_r(column_r'high downto 10);
                     end if;
 
                     -- Schedule Read Data
@@ -422,6 +433,7 @@ begin
                     state_nxt     <= readData;
                 end if;
             when readData =>
+                -- The data is delayed one cycle in IOB register, so we delay the acknowledgement signals too 
                 SResp_nxt <= '1';
                 if burst_cnt_done = '1' then
                     SRespLast_nxt <= '1';
@@ -433,12 +445,12 @@ begin
                     sdram_RAS_n_nxt              <= '1';
                     sdram_CAS_n_nxt              <= '0';
                     sdram_WE_n_nxt               <= '0';
-                    sdram_BA_nxt                 <= a_bank;
-                    sdram_CS_n_nxt               <= BinDecode_n(a_cs);
-                    sdram_SA_nxt(a_column'range) <= a_column;
+                    sdram_BA_nxt                 <= bank_r;
+                    sdram_CS_n_nxt               <= BinDecode_n(cs_r);
+                    sdram_SA_nxt(column_r'range) <= column_r;
                     sdram_SA_nxt(10)             <= '1'; -- auto precharge
-                    if a_column'high >= 10 then
-                        sdram_SA_nxt(a_column'high + 1 downto 11) <= a_column(a_column'high downto 10);
+                    if column_r'high >= 10 then
+                        sdram_SA_nxt(column_r'high + 1 downto 11) <= column_r(column_r'high downto 10);
                     end if;
 
                     -- First word of data and schedule the rest
