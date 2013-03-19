@@ -183,12 +183,8 @@ architecture RTL of sdr_sdram is
     end function CalculateAct2WriteCycles;
 
     constant c_INIT_IDLE_CYCLES        : natural := SDRAM.INIT_IDLE * sl2int(bool2sl(not SHORT_INITIALIZATION));
-    constant c_PRECHARGE_CYCLES        : natural := SDRAM.RP;
-    constant c_REFRESH_CYCLES          : natural := SDRAM.RFC;
-    constant c_PROGRAM_REGISTER_CYCLES : natural := SDRAM.MRD;
     constant c_ACT2READ_CYCLES         : natural := CalculateAct2ReadCycles;
     constant c_ACT2WRITE_CYCLES        : natural := CalculateAct2WriteCycles;
-    constant c_WRITE2READY_CYCLES      : natural := SDRAM.DAL;
 
     type t_state is (initWaitLock, initWaitIdle, initPrecharge, initPrechargeComplete, initRefresh, initRefreshComplete, initProgramModeReg, initProgramModeRegComplete, ready, readCmd, readDataWait, readData, writeCmd, writeDataRest, writePrechargeComplete, refreshComplete);
 
@@ -223,7 +219,7 @@ architecture RTL of sdr_sdram is
     -- Keeps track of number of refreshes perfomed during init
     signal refresh_repeat_cnt_nxt, refresh_repeat_cnt_r : integer range 0 to SDRAM.INIT_REFRESH_COUNT - 1;
     -- Small counter for various delays
-    constant DELAY_CNT_MAX                              : natural := max(c_PRECHARGE_CYCLES, max(c_REFRESH_CYCLES, max(c_PROGRAM_REGISTER_CYCLES, max(c_ACT2WRITE_CYCLES, max(c_ACT2READ_CYCLES, c_WRITE2READY_CYCLES)))));
+    constant DELAY_CNT_MAX                              : natural := max(SDRAM.RP, max(SDRAM.RFC, max(SDRAM.MRD, max(c_ACT2WRITE_CYCLES, max(c_ACT2READ_CYCLES, SDRAM.DAL)))));
     signal delay_cnt_nxt, delay_cnt_r                   : integer range 0 to DELAY_CNT_MAX;
     -- Counts the word of the burst
     signal burst_cnt_nxt, burst_cnt_r                   : integer range 0 to 7;
@@ -280,11 +276,12 @@ begin
     end process reg;
 
     assert false report "Controller timing information: " & lf &
-    "Refresh cycles: " & natural'image(c_REFRESH_CYCLES) & lf &
-    -- +1 at the begining, to include the activate command
-    "Write cycles: " & natural'image(1+c_ACT2WRITE_CYCLES+BURST_LENGTH+c_WRITE2READY_CYCLES) & lf &
+    "Refresh cycles: " & natural'image(SDRAM.RFC) & lf &
+    -- (c_ACT2WRITE-1) is used because it includes the first cycle of the data burst
+    "Write cycles: " & natural'image((c_ACT2WRITE_CYCLES-1)+BURST_LENGTH+SDRAM.DAL) & lf &
     -- (CAS latency-1) is used because CAC incudes the first cycle of the data burst.
-    "Read cycles: " & natural'image(1+c_ACT2READ_CYCLES+(SDRAM.CAC-1)+BURST_LENGTH) & lf &
+    -- +1 at the end, to include the cycle at which the Activate is issued
+    "Read cycles: " & natural'image(c_ACT2READ_CYCLES+(SDRAM.CAC-1)+BURST_LENGTH+1) & lf &
     -- 2 extra cycles in read latency are introduced by the registers in the SDRAM interface. One for command and one for incomming data. 
     "Read accept to first data word latency: " & natural'image(c_ACT2READ_CYCLES+SDRAM.CAC+2) & lf
      severity note;
@@ -352,7 +349,7 @@ begin
                 -- TODO: Add check for cnt constant beeing 0 and bypass the idle state
                 -- TODO: Check if doing waiting in single state would improve the design
                 -- TODO: The separate state machines will be used in pipelined version, so it might be better to do it differently
-                delay_cnt_nxt    <= max(0, c_PRECHARGE_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                delay_cnt_nxt    <= max(0, SDRAM.RP - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                 state_nxt        <= initPrechargeComplete;
             when initPrechargeComplete =>
                 if delay_cnt_done = '1' then
@@ -369,7 +366,7 @@ begin
                 sdram_WE_n_nxt         <= '1';
                 sdram_CS_n_nxt         <= (others => '0'); -- All chips
                 refresh_repeat_cnt_nxt <= refresh_repeat_cnt_r - 1;
-                delay_cnt_nxt          <= max(0, c_REFRESH_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                delay_cnt_nxt          <= max(0, SDRAM.RFC - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                 state_nxt              <= initRefreshComplete;
             when initRefreshComplete =>
                 if delay_cnt_done = '1' then
@@ -386,7 +383,7 @@ begin
                 sdram_BA_nxt    <= DefineModeRegister(SDRAM.BA_WIDTH + SDRAM.SA_WIDTH - 1 downto SDRAM.SA_WIDTH);
                 sdram_SA_nxt    <= DefineModeRegister(SDRAM.SA_WIDTH - 1 downto 0);
                 sdram_CS_n_nxt  <= (others => '0'); -- All chips
-                delay_cnt_nxt   <= max(0, c_PROGRAM_REGISTER_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                delay_cnt_nxt   <= max(0, SDRAM.MRD - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                 state_nxt       <= initProgramModeRegComplete;
             when initProgramModeRegComplete =>
                 if delay_cnt_done = '1' then
@@ -419,7 +416,7 @@ begin
                         if not USE_AUTOMATIC_REFRESH then
                             ocpSlave.SFlag_RefreshAccept <= '1';
                         end if;
-                        delay_cnt_nxt <= max(0, c_REFRESH_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                        delay_cnt_nxt <= max(0, SDRAM.RFC - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                         state_nxt     <= refreshComplete;
                     elsif ocpMaster.MCmd = OCP_CMD_READ then
                         delay_cnt_nxt <= max(0, c_ACT2READ_CYCLES - 1); -- (-1) because of the counter implementation
@@ -486,7 +483,7 @@ begin
                         burst_cnt_nxt <= BURST_LENGTH - 2; -- (-1) because of counter implementation; extra (-1) because current state sends first word
                         state_nxt     <= writeDataRest;
                     else
-                        delay_cnt_nxt <= max(0, c_WRITE2READY_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                        delay_cnt_nxt <= max(0, SDRAM.DAL - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                         state_nxt     <= writePrechargeComplete;
                     end if;
                 end if;
@@ -495,7 +492,7 @@ begin
                 sdram_DQM_nxt        <= not ocpMaster.MDataByteEn;
                 sdram_DQoe_nxt       <= '1';
                 if burst_cnt_done = '1' then
-                    delay_cnt_nxt <= max(0, c_WRITE2READY_CYCLES - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+                    delay_cnt_nxt <= max(0, SDRAM.DAL - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
                     state_nxt     <= writePrechargeComplete;
                 end if;
             when writePrechargeComplete =>
