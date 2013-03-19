@@ -63,6 +63,7 @@ package body sdram_config is
         constant DMD       : natural := RoundTimeConstantToCycles(clkPeriod, tDMD); --! DQM to Input (Write)
         constant MRD       : natural := RoundTimeConstantToCycles(clkPeriod, tMRD); --! Mode Register Delay (program time)
         constant REFI      : natural := RoundTimeConstantToCycles(clkPeriod, tREFI); --! Minimal refresh interval
+        constant RFC       : natural := RC; --! Equal to RowCycle for this SDRAМ
     begin
         assert CACCycles = 2 or CACCycles = 3 report "CAS Latency of 2 or 3 must be used" severity error;
         assert CACCycles > 2 or clkPeriod >= 10 ns report "CAS Latency 2 is only supported for clk freq < 100 MHz" severity error;
@@ -88,7 +89,8 @@ package body sdram_config is
                 QMD                => QMD,
                 DMD                => DMD,
                 MRD                => MRD,
-                REFI               => REFI);
+                REFI               => REFI,
+                RFC                => RFC);
         return res;
     end function GetSDRAMParameters;
 end sdram_config;

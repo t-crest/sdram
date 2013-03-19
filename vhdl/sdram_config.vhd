@@ -29,6 +29,7 @@ package sdram_config is
         DMD                : natural;   -- DQM to Input (Write)
         MRD                : natural;   -- Mode Register Delay (program time)
         REFI               : natural;   -- Refresh interval (cycles between two refresh operations are required)
+        RFC                : natural;   -- Refresh Cycle (time needed for Auto-Refresh operation; might be equal to RC)
     end record;
 
     -- Use a function here, because the timing params are dependent on Clock period and CAS latency

@@ -160,6 +160,8 @@ architecture RTL of sdr_sdram is
         variable result : natural;
     begin
         result := SDRAM.RCD;
+        -- We are using the AutoPrecharge, so deffer the Read command,
+        -- if the burst length is to short to satisfy the tRAS
         if (SDRAM.RCD + SDRAM.CAC + BL - 1 - SDRAM.PQL < SDRAM.RAS) then
             result := SDRAM.RAS + SDRAM.PQL - (BL - 1) - SDRAM.CAC;
         end if;
@@ -172,6 +174,8 @@ architecture RTL of sdr_sdram is
         variable result : natural;
     begin
         result := SDRAM.RCD;
+        -- We are using the AutoPrecharge, so deffer the Write command,
+        -- if the burst length is to short to satisfy the tRAS
         if (SDRAM.RCD + BL - 1 + SDRAM.DPL < SDRAM.RAS) then
             result := SDRAM.RAS - SDRAM.DPL - (BL - 1);
         end if;
@@ -180,7 +184,7 @@ architecture RTL of sdr_sdram is
 
     constant c_INIT_IDLE_CYCLES        : natural := SDRAM.INIT_IDLE * sl2int(bool2sl(not SHORT_INITIALIZATION));
     constant c_PRECHARGE_CYCLES        : natural := SDRAM.RP;
-    constant c_REFRESH_CYCLES          : natural := SDRAM.RC;
+    constant c_REFRESH_CYCLES          : natural := SDRAM.RFC;
     constant c_PROGRAM_REGISTER_CYCLES : natural := SDRAM.MRD;
     constant c_ACT2READ_CYCLES         : natural := CalculateAct2ReadCycles;
     constant c_ACT2WRITE_CYCLES        : natural := CalculateAct2WriteCycles;
@@ -224,8 +228,8 @@ architecture RTL of sdr_sdram is
     -- Counts the word of the burst
     signal burst_cnt_nxt, burst_cnt_r                   : integer range 0 to 7;
     -- The DQ is saved in register during read, so need to delay the acknowledgment
-    signal SResp_nxt                                    : std_logic;
-    signal SRespLast_nxt                                : std_logic;
+    signal SResp_nxt, SResp_r                                    : std_logic;
+    signal SRespLast_nxt, SRespLast_r                            : std_logic;
 begin
     sdram_CKE      <= '1';
     sdram_DQ       <= sdram_DQout_r when sdram_DQoe_r = '1' else (others => 'Z');
@@ -253,8 +257,13 @@ begin
             sdram_DQ_r           <= sdram_DQ;
             sdram_DQout_r        <= ocpMaster.MData;
             sdram_DQoe_r         <= sdram_DQoe_nxt;
-            ocpSlave.SResp       <= SResp_nxt;
-            ocpSlave.SRespLast   <= SRespLast_nxt;
+            -- Delay the read data acknowledge for two cycles corresponding to 2 additional latency cycles introduced by controller.
+            -- This is needed to accept the next command (be in the ready state) before the data transfer is finished.
+            -- This is a quick fix. A proper solution would probably be moving the data acknowledge into the separate FSM.
+            SResp_r              <= SResp_nxt;
+            SRespLast_r          <= SRespLast_nxt;
+            ocpSlave.SResp       <= SResp_r;
+            ocpSlave.SRespLast   <= SRespLast_r;
             -- Counters
             delay_cnt_r          <= delay_cnt_nxt;
             refi_cnt_r           <= refi_cnt_nxt;
@@ -270,6 +279,16 @@ begin
         end if;
     end process reg;
 
+    assert false report "Controller timing information: " & lf &
+    "Refresh cycles: " & natural'image(c_REFRESH_CYCLES) & lf &
+    -- +1 at the begining, to include the activate command
+    "Write cycles: " & natural'image(1+c_ACT2WRITE_CYCLES+BURST_LENGTH+c_WRITE2READY_CYCLES) & lf &
+    -- (CAS latency-1) is used because CAC incudes the first cycle of the data burst.
+    "Read cycles: " & natural'image(1+c_ACT2READ_CYCLES+(SDRAM.CAC-1)+BURST_LENGTH) & lf &
+    -- 2 extra cycles in read latency are introduced by the registers in the SDRAM interface. One for command and one for incomming data. 
+    "Read accept to first data word latency: " & natural'image(c_ACT2READ_CYCLES+SDRAM.CAC+2) & lf
+     severity note;
+    
     -- State machine
     controller : process(a_bank, bank_r, column_r, a_cs, cs_r, a_row, burst_cnt_r, delay_cnt_r, ocpMaster.MCmd, ocpMaster.MDataByteEn, pll_locked, refresh_repeat_cnt_r, state_r, refi_cnt_r)
         variable do_refresh              : std_logic;
@@ -290,8 +309,9 @@ begin
         sdram_BA_nxt                                        <= a_bank;
         sdram_SA_nxt(sdram_SA_nxt'high downto a_row'length) <= (others => '0');
         sdram_SA_nxt(a_row'range)                           <= a_row;
+        -- Don't mask reads
+        sdram_DQM_nxt  <= (others => '0');
         -- Data Disabled/High-Z
-        sdram_DQM_nxt                                       <= not ocpMaster.MDataByteEn; -- TODO: handle masking by using tQMD and tDMD
         sdram_DQoe_nxt                                      <= '0';
         -- OCP acknowledge
         ocpSlave.SCmdAccept                                 <= '0';
@@ -424,8 +444,12 @@ begin
                     end if;
 
                     -- Schedule Read Data
-                    delay_cnt_nxt <= max(0, SDRAM.CAC - 2 + 1); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting; (+1) because the sdram_DQ input is registered in IOB
-                    state_nxt     <= readDataWait;
+                    if SDRAM.CAC >= 2 then
+                        delay_cnt_nxt <= SDRAM.CAC - 2; -- (-1) because of counter implementation; extra (-1) because CAC includes the first data transfer cycle
+                        state_nxt     <= readDataWait;
+                    elsif SDRAM.CAC = 1 then -- CAC of 1 means that there is no wait cycles (the data available in next cycle)
+                        state_nxt     <= readData;
+                    end if;
                 end if;
             when readDataWait =>
                 if delay_cnt_done = '1' then
@@ -433,7 +457,8 @@ begin
                     state_nxt     <= readData;
                 end if;
             when readData =>
-                -- The data is delayed one cycle in IOB register, so we delay the acknowledgement signals too 
+                -- The data seen by the user has 2 cycles of extra latency (1 reg to issue a command on SDRAМ interface and 1 reg to sample the data) 
+                -- The extra delay of the acknowledgement is implemented as a shift register, to allow accepting the next command early
                 SResp_nxt <= '1';
                 if burst_cnt_done = '1' then
                     SRespLast_nxt <= '1';
@@ -486,4 +511,6 @@ begin
                 end if;
         end case;
     end process controller;
+
+    
 end architecture RTL;
