@@ -65,7 +65,7 @@ base:
 get_timing:
 	cat /dev/null | make batch > log
 	grep -B 1 'Time:' log | sed '/Time:/! N;s/\n/ /' > log.time
-	grep '\(RD\|WR\) at' log.time | awk '{print $$5" "$$11}' > log.cmd_time
+	grep '\(RD\|WR\) at' log.time | sed 's/ us /000 ns/' | awk '{print $$5" "$$11}' > log.cmd_time
 	l=0; cat log.cmd_time | while read c t ; do echo $$lc $$((t-l)); lc=$$c; l=$$t; done
 
 clean:
