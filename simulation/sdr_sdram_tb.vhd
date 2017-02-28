@@ -276,7 +276,7 @@ begin
             variable i : integer := 0;
         begin
             ocp_master.MAddr <= std_logic_vector(to_unsigned(addr, ocp_master.MAddr'length));
-            ocp_master.MCmd  <= "001";
+            ocp_master.MCmd  <= "010";
 
             loop
                 wait until rising_edge(clk);
@@ -299,7 +299,7 @@ begin
             variable i : integer := 0;
         begin
             ocp_master.MAddr <= std_logic_vector(to_unsigned(addr, ocp_master.MAddr'length));
-            ocp_master.MCmd  <= "010";
+            ocp_master.MCmd  <= "001";
 
             loop
                 ocp_master.MData <= data(i);

@@ -122,8 +122,8 @@ architecture RTL of sdr_sdram is
         end if;
     end function sl2int;
 
-    constant OCP_CMD_READ  : std_logic_vector(2 downto 0) := "001";
-    constant OCP_CMD_WRITE : std_logic_vector(2 downto 0) := "010";
+    constant OCP_CMD_READ  : std_logic_vector(2 downto 0) := "010";
+    constant OCP_CMD_WRITE : std_logic_vector(2 downto 0) := "001";
 
     function DefineModeRegister return std_logic_vector is
         variable result : std_logic_vector(SDRAM.BA_WIDTH + SDRAM.SA_WIDTH - 1 downto 0);
@@ -459,6 +459,7 @@ begin
                 SResp_nxt <= '1';
                 if burst_cnt_done = '1' then
                     SRespLast_nxt <= '1';
+		    --SResp_nxt <= '1';
                     state_nxt     <= ready;
                 end if;
             when writeCmd =>
@@ -498,6 +499,7 @@ begin
             when writePrechargeComplete =>
                 if delay_cnt_done = '1' then
                     state_nxt <= ready;
+		    SResp_nxt <= '1';--LUCA
                 end if;
             when refreshComplete =>
                 if delay_cnt_done = '1' then
