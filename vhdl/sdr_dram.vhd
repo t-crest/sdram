@@ -459,8 +459,7 @@ begin
                 SResp_nxt <= '1';
                 if burst_cnt_done = '1' then
                     SRespLast_nxt <= '1';
-		    --SResp_nxt <= '1';
-                    state_nxt     <= ready;
+		    state_nxt     <= ready;
                 end if;
             when writeCmd =>
                 if delay_cnt_done = '1' then
@@ -499,7 +498,7 @@ begin
             when writePrechargeComplete =>
                 if delay_cnt_done = '1' then
                     state_nxt <= ready;
-		    SResp_nxt <= '1';--LUCA
+		    SResp_nxt <= '1';
                 end if;
             when refreshComplete =>
                 if delay_cnt_done = '1' then

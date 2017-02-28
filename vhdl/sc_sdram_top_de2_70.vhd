@@ -2,19 +2,27 @@ library IEEE;
 use IEEE.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.sc_pack.all;
+use work.sdram_config.all;
+use work.sdram_controller_interface.all;
 
-entity sc_mem_if is
-    --  generic (addr_bits : integer);
-
+entity sc_sdram_top is
     port(
-        clk, rst        : in    std_logic;
+        clk        : in    std_logic;
+	rst        : in    std_logic;
 
         pll_locked      : in    std_logic;
         dram_clk_skewed : in    std_logic;
-
-        sc_mem_out      : in    sc_out_type;
-        sc_mem_in       : out   sc_in_type;
+        
+        -- User interface
+	M_Cmd : in  std_logic_vector(2 downto 0); 
+	M_Addr : in  std_logic_vector(25 downto 0);
+	M_Data : in  std_logic_vector(31 downto 0);
+	M_DataValid : in std_logic;
+	M_DataByteEn : in std_logic_vector(3 downto 0);
+	S_Resp : out  std_logic_vector(1 downto 0);
+	S_Data : out  std_logic_vector(31 downto 0);
+	S_CmdAccept : out std_logic;
+	S_DataAccept : out std_logic;
 
         -- memory interface
         -- SDRAM interface lower chip
@@ -44,15 +52,12 @@ entity sc_mem_if is
         -- data bus from both chips
         dram_DQ         : inout std_logic_vector(31 downto 0) -- Data
     );
-end sc_mem_if;
+end sc_sdram_top;
 
-use work.sdram_config.all;
-use work.sdram_controller_interface.all;
-
-architecture rtl of sc_mem_if is
-    constant BURST_LENGTH : natural           := 1;
+architecture rtl of sc_sdram_top is
+    constant BURST_LENGTH : natural           := 4;
     -- 100MHz, 2 cycles read data latency
-    constant tCLK_PERIOD  : time              := 10 ns;
+    constant tCLK_PERIOD  : time              := 20 ns;--changed
     constant CAS_LATENCY  : natural           := 2;
     constant SDRAM        : sdram_config_type := GetSDRAMParameters(tCLK_PERIOD, CAS_LATENCY);
 
@@ -63,11 +68,6 @@ architecture rtl of sc_mem_if is
     constant BA_LOW_BIT  : integer := ROW_LOW_BIT + SDRAM.ROW_WIDTH; -- 9+13=22
     constant CS_LOW_BIT  : integer := BA_LOW_BIT + SDRAM.BA_WIDTH; -- 22+2=24
 
-    --    signal res_cnt : std_logic_vector(2 downto 0) := "000";
-    --    attribute altera_attribute : string;
-    --    attribute altera_attribute of res_cnt : signal is "POWER_UP_LEVEL=LOW";
-    --    signal rst_n : std_logic;
-
     signal dram_DQM   : std_logic_vector(3 downto 0);
     signal dram_BA    : std_logic_vector(1 downto 0);
     signal dram_ADDR  : std_logic_vector(12 downto 0);
@@ -77,10 +77,7 @@ architecture rtl of sc_mem_if is
     signal dram_CS_N  : std_logic_vector(2 ** CS_WIDTH - 1 downto 0);
     signal dram_WE_N  : std_logic;
 
-    signal ocpMaster : SDRAM_controller_master_type;
-    signal ocpSlave  : SDRAM_controller_slave_type;
-
-    -- attribute ALTERA_ATTRIBUTE : string;
+    attribute ALTERA_ATTRIBUTE : string;
     attribute ALTERA_ATTRIBUTE of dram0_BA_0 : signal is "FAST_OUTPUT_REGISTER=ON";
     attribute ALTERA_ATTRIBUTE of dram0_BA_1 : signal is "FAST_OUTPUT_REGISTER=ON";
     attribute ALTERA_ATTRIBUTE of dram0_CAS_n : signal is "FAST_OUTPUT_REGISTER=ON";
@@ -104,31 +101,10 @@ architecture rtl of sc_mem_if is
     attribute ALTERA_ATTRIBUTE of dram1_LDQM : signal is "FAST_OUTPUT_REGISTER=ON";
 
     attribute ALTERA_ATTRIBUTE of dram_DQ : signal is "FAST_INPUT_REGISTER=ON;FAST_OUTPUT_REGISTER=ON";
---attribute ALTERA_ATTRIBUTE of sdram_DQoe_r: port is "FAST_OUTPUT_REGISTER=ON";
+    --attribute ALTERA_ATTRIBUTE of sdram_DQoe_r: port is "FAST_OUTPUT_REGISTER=ON";
 
 begin
-
-    --    process(sys_clk, pll_locked)
-    --    begin
-    --        if pll_locked = '0' then
-    --            res_cnt  <= "000";
-    --            rst  <= '1';
-    --        elsif rising_edge(sys_clk) then
-    --            if (res_cnt /= "111") then
-    --                res_cnt <= std_logic_vector(unsigned(res_cnt) + 1);
-    --            end if;
-    --            rst <= not res_cnt(0) or not res_cnt(1) or not res_cnt(2);
-    --        end if;
-    --    end process;
-    --    rst_n  <= not rst;
-
-    --    pll : entity work.de2_70_sdram_pll
-    --        port map(
-    --            inclk0 => clk,
-    --            c0     => sys_clk,
-    --            c1     => dram_clk,
-    --            c2     => dram_clk_skew,
-    --            locked => pll_locked);
+	S_Resp(1) <= '0';
 
     sdr_sdram_inst : entity work.sdr_sdram
         generic map(
@@ -144,8 +120,20 @@ begin
             rst         => rst,
             clk         => clk,
             pll_locked  => pll_locked,
-            ocpSlave    => ocpSlave,
-            ocpMaster   => ocpMaster,
+
+		  -- User interface
+	ocpMaster.MCmd => M_Cmd,--   : in    SDRAM_controller_master_type;
+	ocpMaster.MAddr =>M_Addr(25 downto 2), --
+	ocpMaster.MData => M_Data,--
+	ocpMaster.MDataByteEn => M_DataByteEn,--
+	ocpMaster.MFlag_CmdRefresh => '0',--
+	ocpSlave.SCmdAccept => S_CmdAccept, --    : out   SDRAM_controller_slave_type;
+	ocpSlave.SDataAccept => S_DataAccept,--
+	ocpSlave.SData => S_Data, --
+	ocpSlave.SResp => S_Resp(0),--
+	ocpSlave.SRespLast => open, --
+	ocpSlave.SFlag_RefreshAccept => open,--
+
             sdram_CKE   => dram_CKE,
             sdram_RAS_n => dram_RAS_n,
             sdram_CAS_n => dram_CAS_n,
@@ -155,58 +143,6 @@ begin
             sdram_SA    => dram_ADDR,
             sdram_DQ    => dram_DQ,
             sdram_DQM   => dram_DQM);
-
-    -- Early ready acknowledgement
-    --  process (rst, clk)
-    --  begin  -- process
-    --    if rst = '1' then
-    --      rdy_cnt <= "0000";
-    --    elsif clk'event and clk = '1' then  -- rising clock edge
-    --      if sc_mem_out.wr = '1' then
-    --         rdy_cnt <= SDRAM.RAS+SDRAM.CAC;		
-    --		elsif sc_mem_out.rd = '1' then
-    --         rdy_cnt <= SDRAM.RAS;				
-    --		elsif rdy_cnt <> "0000" then
-    --			rdy_cnt <= std_logic_vector(unsigned(rdy_cnt)-1);
-    --		end if;
-    --    end if;
-    --  end process;
-    --  sc_mem_in.rdy_cnt <= "11" when rdy_cnt(3 downto 2) <> "00" else
-    --		rdy_cnt(1 downto 0);
-
-
-    process(clk, rst)
-    begin                               -- process
-        if rst = '1' then
-            sc_mem_in.rdy_cnt <= "11";
-        elsif clk'event and clk = '1' then -- rising clock edge
-            -- Hold Cmd and Address
-            if sc_mem_out.wr = '1' or sc_mem_out.rd = '1' then
-                ocpMaster.MCmd  <= '0' & sc_mem_out.wr & sc_mem_out.rd;
-                ocpMaster.MAddr <= sc_mem_out.address(ocpMaster.MAddr'range);
-            end if;
-            -- Hold Write data
-            if sc_mem_out.wr = '1' then
-                ocpMaster.MData <= sc_mem_out.wr_data;
-            end if;
-            -- Hold Read result
-            if ocpSlave.SResp = '1' then
-                sc_mem_in.rd_data <= ocpSlave.SData;
-            end if;
-            if ocpMaster.MCmd /= "000" and ocpSlave.SCmdAccept = '1' then
-                ocpMaster.MCmd <= "000";
-            end if;
-            -- Simple (late) ready acknowledgement for now.
-            if sc_mem_out.wr = '1' or sc_mem_out.rd = '1' then
-                sc_mem_in.rdy_cnt <= "11";
-            elsif ocpSlave.SDataAccept = '1' or ocpSlave.SResp = '1' then
-                sc_mem_in.rdy_cnt <= "00";
-            end if;
-        end if;
-    end process;
-
-    -- Write 
-    ocpMaster.MDataByteEn <= (others => '1');
 
     dram0_BA_0  <= dram_BA(0);
     dram0_BA_1  <= dram_BA(1);
