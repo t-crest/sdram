@@ -14,6 +14,7 @@ package sdram_controller_interface is
 	--! The value of false: enables the SFlag_CmdRefresh on slave port that would trigger the SDRAM refresh once the SDRAM becomes ready
 	--! In such case, the refresh is acknowledged with MFlag_RefreshAccept of master port
 	constant SDRAM_USE_AUTOMATIC_REFRESH : boolean := true;
+	constant SDRAM_USE_MANUAL_REFRESH : boolean := false;
 
 	-- Simple OCP like protocol, master driven signals
 	type SDRAM_controller_master_type is record

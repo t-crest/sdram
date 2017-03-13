@@ -315,6 +315,7 @@ begin
 		SRespLast_nxt                                       <= '0';
 		ocpSlave.SDataAccept                                <= '0';
 		state_nxt                                           <= state_r;
+		ocpSlave.SFlag_RefreshAccept 			    <= '0';
 
 		-- Counters
 		refresh_repeat_cnt_done := bool2sl(refresh_repeat_cnt_r = 0);
