@@ -23,7 +23,7 @@ package sdram_controller_interface is
 		MData            : std_logic_vector(SDRAM_DATA_WIDTH - 1 downto 0); -- Write Data  
 		MDataByteEn      : std_logic_vector(SDRAM_DATA_WIDTH / 8 - 1 downto 0); -- Write Data mask
 		-- The write handshaking is not used. The controller expects data to be always valid during request, and uses fixed transactions
-		-- MDataValid       : std_logic ; -- Write Data valid (handshaking during write)
+		MDataValid       : std_logic ; -- Write Data valid (handshaking during write)
 		-- MDataLast        : std_logic ; -- Write Data Last (handshaking during write)
 		MFlag_CmdRefresh : std_logic;   -- OCP sideband signal to trigger refresh (@see SDRAM_USE_AUTOMATIC_REFRESH constant)
 	end record SDRAM_controller_master_type;

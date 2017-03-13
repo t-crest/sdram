@@ -286,7 +286,7 @@ begin
 		severity note;
 
 	-- State machine
-	controller : process(a_bank, bank_r, column_r, a_cs, cs_r, a_row, burst_cnt_r, delay_cnt_r, ocpMaster.MCmd, ocpMaster.MDataByteEn, pll_locked, refresh_repeat_cnt_r, state_r, refi_cnt_r)
+	controller : process(a_bank, bank_r, column_r, a_cs, cs_r, a_row, burst_cnt_r, delay_cnt_r, ocpMaster.MCmd, ocpMaster.MDataByteEn, pll_locked, refresh_repeat_cnt_r, state_r, refi_cnt_r, ocpMaster.MDataValid)
 		variable do_refresh              : std_logic;
 		-- These are created as variables, to get rid of simulation range mismatch, where counters are out of range in transient time.
 		variable refi_cnt_done           : std_logic;
@@ -400,7 +400,7 @@ begin
 				end if;
 				-- Read/Write/Refresh
 				if ocpMaster.MCmd = OCP_CMD_READ or ocpMaster.MCmd = OCP_CMD_WRITE or do_refresh = '1' then
-					ocpSlave.SCmdAccept       <= '1';
+					-- ocpSlave.SCmdAccept       <= '1'; -- luca
 					-- Activate / Refresh
 					sdram_RAS_n_nxt           <= '0';
 					sdram_CAS_n_nxt           <= not do_refresh; -- '0': Refresh; '1': Activate
@@ -419,9 +419,11 @@ begin
 						delay_cnt_nxt <= max(0, SDRAM.RFC - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
 						state_nxt     <= refreshComplete;
 					elsif ocpMaster.MCmd = OCP_CMD_READ then
+						ocpSlave.SCmdAccept       <= '1';
 						delay_cnt_nxt <= max(0, c_ACT2READ_CYCLES - 1); -- (-1) because of the counter implementation
 						state_nxt     <= readCmd;
 					else
+						ocpSlave.SCmdAccept       <= '0';
 						delay_cnt_nxt <= max(0, c_ACT2WRITE_CYCLES - 1); -- (-1) because of the counter implementation
 						state_nxt     <= writeCmd;
 					end if;
@@ -463,6 +465,9 @@ begin
 				end if;
 			when writeCmd =>
 				if delay_cnt_done = '1' then
+					ocpSlave.SCmdAccept       <= '1';
+					if ocpMaster.MDataValid = '1' then
+				
 					-- Write with AutoPrecharge
 					sdram_RAS_n_nxt              <= '1';
 					sdram_CAS_n_nxt              <= '0';
@@ -476,6 +481,7 @@ begin
 					end if;
 
 					-- First word of data and schedule the rest
+					
 					ocpSlave.SDataAccept <= '1';
 					sdram_DQM_nxt        <= not ocpMaster.MDataByteEn;
 					sdram_DQoe_nxt       <= '1';
@@ -486,6 +492,9 @@ begin
 						delay_cnt_nxt <= max(0, SDRAM.DAL - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
 						state_nxt     <= writePrechargeComplete;
 					end if;
+					
+					end if;
+					
 				end if;
 			when writeDataRest =>
 				ocpSlave.SDataAccept <= '1';
