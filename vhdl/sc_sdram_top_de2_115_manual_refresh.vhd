@@ -126,6 +126,7 @@ begin
 			ocpMaster.MCmd               => M_Cmd, --   : in    SDRAM_controller_master_type;
 			ocpMaster.MAddr              => M_Addr(26 downto 2), --
 			ocpMaster.MData              => M_Data, --
+			ocpMaster.MDataValid         => M_DataValid, --
 			ocpMaster.MDataByteEn        => M_DataByteEn, --
 			ocpMaster.MFlag_CmdRefresh   => M_CmdRefresh, --
 			ocpSlave.SCmdAccept          => S_CmdAccept, --    : out   SDRAM_controller_slave_type;
