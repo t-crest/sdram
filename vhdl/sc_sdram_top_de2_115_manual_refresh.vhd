@@ -70,8 +70,6 @@ architecture rtl of sc_sdram_top is
 	signal dram_CS_N_int  : std_logic_vector(2 ** CS_WIDTH - 1 downto 0);
 	signal dram_WE_N_int  : std_logic;
 
-	signal S_RefreshAccept_next : std_logic;
-
 	attribute ALTERA_ATTRIBUTE : string;
 	attribute ALTERA_ATTRIBUTE of dram_BA_0 : signal is "FAST_OUTPUT_REGISTER=ON";
 	attribute ALTERA_ATTRIBUTE of dram_BA_1 : signal is "FAST_OUTPUT_REGISTER=ON";
@@ -90,6 +88,25 @@ architecture rtl of sc_sdram_top is
 	attribute ALTERA_ATTRIBUTE of dram_DQ : signal is "FAST_INPUT_REGISTER=ON;FAST_OUTPUT_REGISTER=ON";
 --attribute ALTERA_ATTRIBUTE of sdram_DQoe_r: port is "FAST_OUTPUT_REGISTER=ON";
 
+	signal M_Addr_D1 : std_logic_vector(26 downto 0);
+	signal M_Data_D1 : std_logic_vector(31 downto 0);
+	signal M_DataValid_D1 : std_logic;
+	signal M_DataByteEn_D1 : std_logic_vector(3 downto 0);
+				
+	signal M_Addr_D2 : std_logic_vector(26 downto 0);
+	signal M_Data_D2 : std_logic_vector(31 downto 0);
+	signal M_DataValid_D2 : std_logic;
+	signal M_DataByteEn_D2 : std_logic_vector(3 downto 0);
+	
+	signal M_Addr_int : std_logic_vector(26 downto 0);
+	signal M_Data_int : std_logic_vector(31 downto 0);
+	signal M_DataValid_int : std_logic;
+	signal M_DataByteEn_int : std_logic_vector(3 downto 0);
+	
+	signal S_CmdAccept_int : std_logic;
+					
+	signal M_Cmd_curr, M_Cmd_int, M_Cmd_hold : std_logic_vector(2 downto 0);
+	
 begin
 	S_Resp(1) <= '0';
 
@@ -106,6 +123,8 @@ begin
 	dram_CS_N  <= dram_CS_N_int(0);
 	dram_RAS_N <= dram_RAS_N_int;
 	dram_WE_N  <= dram_WE_N_int;
+	
+	S_CmdAccept <= S_CmdAccept_int;
 
 	sdr_sdram_inst : entity work.sdr_sdram
 		generic map(
@@ -123,13 +142,13 @@ begin
 			pll_locked                   => pll_locked,
 
 			-- User interface
-			ocpMaster.MCmd               => M_Cmd, --   : in    SDRAM_controller_master_type;
-			ocpMaster.MAddr              => M_Addr(26 downto 2), --
-			ocpMaster.MData              => M_Data, --
-			ocpMaster.MDataValid         => M_DataValid, --
-			ocpMaster.MDataByteEn        => M_DataByteEn, --
+			ocpMaster.MCmd               => M_Cmd_int, --   : in    SDRAM_controller_master_type;
+			ocpMaster.MAddr              => M_Addr(26 downto 2),--M_Addr_int(26 downto 2), --
+			ocpMaster.MData              => M_Data_int, --
+			ocpMaster.MDataValid         => M_DataValid_int, --
+			ocpMaster.MDataByteEn        => M_DataByteEn_int, --
 			ocpMaster.MFlag_CmdRefresh   => M_CmdRefresh, --
-			ocpSlave.SCmdAccept          => S_CmdAccept, --    : out   SDRAM_controller_slave_type;
+			ocpSlave.SCmdAccept          => S_CmdAccept_int, --    : out   SDRAM_controller_slave_type;
 			ocpSlave.SDataAccept         => S_DataAccept, --
 			ocpSlave.SData               => S_Data, --
 			ocpSlave.SResp               => S_Resp(0), --
@@ -146,6 +165,94 @@ begin
 			sdram_DQ                     => dram_DQ,
 			sdram_DQM                    => dram_DQM_int);
 
+-- Logic added to complyt with the TDM tree almost OCP protocol
+	delay_regs : process(clk) is
+	begin
+		if rising_edge(clk) then
+			if (rst = '1') then
+				M_Addr_D1 <= (others => '0');
+				M_Data_D1 <= (others => '0');
+				M_DataValid_D1 <= '0';
+				M_DataByteEn_D1 <= (others => '0');
+				
+				M_Addr_D2 <= (others => '0');
+				M_Data_D2 <= (others => '0');
+				M_DataValid_D2 <= '0';
+				M_DataByteEn_D2 <= (others => '0');
+				
+				M_Cmd_curr <= (others => '0');
+				M_Cmd_hold <= (others => '0');
+			else
+				M_Addr_D1 <= M_Addr;
+				M_Data_D1 <= M_Data;
+				M_DataValid_D1 <= M_DataValid;
+				M_DataByteEn_D1 <= M_DataByteEn;
+				
+				M_Addr_D2 <= M_Addr_D1;
+				M_Data_D2 <= M_Data_D1;
+				M_DataValid_D2 <= M_DataValid_D1;
+				M_DataByteEn_D2 <= M_DataByteEn_D1;
+				
+				if (M_Cmd /= "000") then -- IDLE command
+					M_Cmd_curr <= M_Cmd;
+					M_Cmd_hold <= M_Cmd;
+				end if;
+				
+				if (S_CmdAccept_int = '1') then
+					M_Cmd_hold <= (others => '0');
+				end if;
+				
+		
+			end if;
+		end if;	
+	end process delay_regs;
+
+	
+	delay_mux : process (M_Cmd, M_Cmd_curr, M_cmd_hold, M_Addr_D2, M_Data_D2, M_DataValid_D2, M_DataByteEn_D2, M_Addr, M_Data, M_DataValid, M_DataByteEn) is
+   begin
+      case M_Cmd is
+         when "000"  => --idle
+				M_Cmd_int <= M_cmd_hold;
+				case M_Cmd_curr is
+				when "001"  => --write
+					M_Addr_int <= M_Addr_D2;
+					M_Data_int <= M_Data_D2;
+					M_DataValid_int <= M_DataValid_D2;
+					M_DataByteEn_int <= M_DataByteEn_D2;
+				when "010"  => --read
+					M_Addr_int <= M_Addr;
+					M_Data_int <= M_Data;
+					M_DataValid_int <= M_DataValid;
+					M_DataByteEn_int <= M_DataByteEn;
+				when others => 
+					M_Addr_int <= M_Addr;
+					M_Data_int <= M_Data;
+					M_DataValid_int <= M_DataValid;
+					M_DataByteEn_int <= M_DataByteEn;
+				end case;
+				
+         when "001"  => --write
+				M_Cmd_int <= M_cmd;
+				M_Addr_int <= M_Addr_D2;
+				M_Data_int <= M_Data_D2;
+				M_DataValid_int <= M_DataValid_D2;
+				M_DataByteEn_int <= M_DataByteEn_D2;
+         when "010"  => --read
+				M_Cmd_int <= M_cmd;
+				M_Addr_int <= M_Addr;
+				M_Data_int <= M_Data;
+				M_DataValid_int <= M_DataValid;
+				M_DataByteEn_int <= M_DataByteEn;
+         when others => 
+				M_Cmd_int <= M_cmd;
+				M_Addr_int <= M_Addr;
+				M_Data_int <= M_Data;
+				M_DataValid_int <= M_DataValid;
+				M_DataByteEn_int <= M_DataByteEn;
+      end case;
+   end process delay_mux;
+			
+			
 	-- Registers
 --	reg : process(clk) is
 --	begin

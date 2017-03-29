@@ -468,30 +468,30 @@ begin
 					ocpSlave.SCmdAccept       <= '1';
 					if ocpMaster.MDataValid = '1' then
 				
-					-- Write with AutoPrecharge
-					sdram_RAS_n_nxt              <= '1';
-					sdram_CAS_n_nxt              <= '0';
-					sdram_WE_n_nxt               <= '0';
-					sdram_BA_nxt                 <= bank_r;
-					sdram_CS_n_nxt               <= BinDecode_n(cs_r);
-					sdram_SA_nxt(column_r'range) <= column_r;
-					sdram_SA_nxt(10)             <= '1'; -- auto precharge
-					if column_r'high >= 10 then
-						sdram_SA_nxt(column_r'high + 1 downto 11) <= column_r(column_r'high downto 10);
-					end if;
+						-- Write with AutoPrecharge
+						sdram_RAS_n_nxt              <= '1';
+						sdram_CAS_n_nxt              <= '0';
+						sdram_WE_n_nxt               <= '0';
+						sdram_BA_nxt                 <= bank_r;
+						sdram_CS_n_nxt               <= BinDecode_n(cs_r);
+						sdram_SA_nxt(column_r'range) <= column_r;
+						sdram_SA_nxt(10)             <= '1'; -- auto precharge
+						if column_r'high >= 10 then
+							sdram_SA_nxt(column_r'high + 1 downto 11) <= column_r(column_r'high downto 10);
+						end if;
 
-					-- First word of data and schedule the rest
-					
-					ocpSlave.SDataAccept <= '1';
-					sdram_DQM_nxt        <= not ocpMaster.MDataByteEn;
-					sdram_DQoe_nxt       <= '1';
-					if BURST_LENGTH >= 2 then
-						burst_cnt_nxt <= BURST_LENGTH - 2; -- (-1) because of counter implementation; extra (-1) because current state sends first word
-						state_nxt     <= writeDataRest;
-					else
-						delay_cnt_nxt <= max(0, SDRAM.DAL - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
-						state_nxt     <= writePrechargeComplete;
-					end if;
+						-- First word of data and schedule the rest
+						
+						ocpSlave.SDataAccept <= '1';
+						sdram_DQM_nxt        <= not ocpMaster.MDataByteEn;
+						sdram_DQoe_nxt       <= '1';
+						if BURST_LENGTH >= 2 then
+							burst_cnt_nxt <= BURST_LENGTH - 2; -- (-1) because of counter implementation; extra (-1) because current state sends first word
+							state_nxt     <= writeDataRest;
+						else
+							delay_cnt_nxt <= max(0, SDRAM.DAL - 2); -- (-1) because of counter implementation; extra (-1) because we stay idle during whole counting
+							state_nxt     <= writePrechargeComplete;
+						end if;
 					
 					end if;
 					
